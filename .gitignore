@@ -1,0 +1,8 @@
+# build output (the installer is published as a release asset instead)
+/Nexo.exe
+/dist/
+
+# local scratch
+/tools/_*
+*.log
+*.zip
