@@ -17,14 +17,14 @@ using Microsoft.Win32;
 [assembly: AssemblyProduct("Nexo")]
 [assembly: AssemblyCompany("Nexo")]
 [assembly: AssemblyCopyright("Copyright © 2026 Nexo")]
-[assembly: AssemblyVersion("1.0.2.0")]
-[assembly: AssemblyFileVersion("1.0.2.0")]
+[assembly: AssemblyVersion("1.0.3.0")]
+[assembly: AssemblyFileVersion("1.0.3.0")]
 
 // ---------- the actual work ----------
 
 static class Setup
 {
-    public const string Version = "1.0.2";
+    public const string Version = "1.0.3";
     const string UninstKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\Nexo";
     const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
 

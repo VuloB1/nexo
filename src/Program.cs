@@ -32,8 +32,8 @@ using SD = System.Drawing;
 [assembly: AssemblyDescription("Menú de inicio personalizado para Windows")]
 [assembly: AssemblyCompany("Nexo")]
 [assembly: AssemblyCopyright("Copyright © 2026 Nexo")]
-[assembly: AssemblyVersion("1.0.2.0")]
-[assembly: AssemblyFileVersion("1.0.2.0")]
+[assembly: AssemblyVersion("1.0.3.0")]
+[assembly: AssemblyFileVersion("1.0.3.0")]
 
 namespace SMX
 {
@@ -727,7 +727,8 @@ namespace SMX
             greeting = F<TextBlock>("Greeting"); userInitial = F<TextBlock>("UserInitial"); avatar = F<Border>("Avatar");
             userInitial.Text = AppDir.User.Substring(0, 1).ToUpper();
             LoadPrefs();
-            if (TestLook != null) { var p = TestLook.Split(','); prefs.Accent = p[0]; prefs.Tint = int.Parse(p[1]); prefs.CardMul = int.Parse(p[2]); if (p.Length > 5) { prefs.Corners = int.Parse(p[3]); prefs.Density = int.Parse(p[4]); prefs.TextSz = int.Parse(p[5]); } } // --look "#E74856,30,200", in memory only SetSize(prefs.Size, false); ApplyAvatar();
+            if (TestLook != null) { var p = TestLook.Split(','); prefs.Accent = p[0]; prefs.Tint = int.Parse(p[1]); prefs.CardMul = int.Parse(p[2]); if (p.Length > 5) { prefs.Corners = int.Parse(p[3]); prefs.Density = int.Parse(p[4]); prefs.TextSz = int.Parse(p[5]); } } // --look "#E74856,30,200", in memory only
+            ApplyAvatar(); // was swallowed by the comment above: the picture was never loaded at start, only right after choosing it
             F<Button>("BtnWin").Content = HeightNames[prefs.WinSize % Heights.Length];
             widgets = new WidgetsCtl(win, prefs.HideWidgets, h => { prefs.HideWidgets = h; SavePrefs(); });
 
