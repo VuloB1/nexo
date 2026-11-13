@@ -32,8 +32,8 @@ using SD = System.Drawing;
 [assembly: AssemblyDescription("Menú de inicio personalizado para Windows")]
 [assembly: AssemblyCompany("Nexo")]
 [assembly: AssemblyCopyright("Copyright © 2026 Nexo")]
-[assembly: AssemblyVersion("1.0.1.0")]
-[assembly: AssemblyFileVersion("1.0.1.0")]
+[assembly: AssemblyVersion("1.0.2.0")]
+[assembly: AssemblyFileVersion("1.0.2.0")]
 
 namespace SMX
 {
@@ -227,8 +227,32 @@ namespace SMX
             t.SetApartmentState(ApartmentState.STA); t.Start();
         }
 
-        // Disk cache: one PNG per app, reused for 14 days (so a changed app icon refreshes eventually).
+        // Disk cache: one PNG per app, shown at once on the next start. It is only a first paint: each app's icon is re-read from the shell
+        // in the background (at most every 6 hours) and replaced on screen and on disk when it changed, so an updated app never keeps its old icon.
         static readonly string cacheDir = Path.Combine(AppDir.Path, "icons");
+        static readonly Dictionary<string, DateTime> checkedAt = new Dictionary<string, DateTime>(); // UI thread only
+        public static Action<string, ImageSource> Changed; // an icon was replaced: the menu updates the nodes that show it
+
+        static void Revalidate(string id)
+        {
+            DateTime t;
+            if (id.StartsWith("file:") || (checkedAt.TryGetValue(id, out t) && DateTime.UtcNow - t < TimeSpan.FromHours(6))) return;
+            checkedAt[id] = DateTime.UtcNow;
+            idle.Enqueue("!" + id); q.Add(""); // "!" = only compare with a fresh copy
+        }
+
+        // "Actualizar iconos" in the tray menu: forget every cached icon so all of them are read again.
+        public static void Reset()
+        {
+            cache.Clear(); failed.Clear(); checkedAt.Clear();
+            try { foreach (var f in Directory.GetFiles(cacheDir, "*.png")) File.Delete(f); } catch { }
+        }
+
+        static byte[] Png(ImageSource img)
+        {
+            var enc = new PngBitmapEncoder(); enc.Frames.Add(BitmapFrame.Create((BitmapSource)img));
+            using (var ms = new MemoryStream()) { enc.Save(ms); return ms.ToArray(); }
+        }
 
         static string DiskFile(string id)
         {
@@ -239,7 +263,7 @@ namespace SMX
         static ImageSource Disk(string id)
         {
             string f = DiskFile(id);
-            if (!File.Exists(f) || DateTime.UtcNow - File.GetLastWriteTimeUtc(f) > TimeSpan.FromDays(14)) return null;
+            if (!File.Exists(f)) return null;
             var bi = new BitmapImage();
             bi.BeginInit(); bi.UriSource = new Uri(f); bi.CacheOption = BitmapCacheOption.OnLoad; bi.EndInit(); bi.Freeze(); // OnLoad: don't keep the file locked
             return bi;
@@ -255,7 +279,7 @@ namespace SMX
         public static void Request(Node n)
         {
             ImageSource c;
-            if (cache.TryGetValue(n.Id, out c)) { n.SetIconQuiet(c); return; }
+            if (cache.TryGetValue(n.Id, out c)) { n.SetIconQuiet(c); Revalidate(n.Id); return; }
             if (failed.Contains(n.Id)) return;
             List<Node> l;
             if (!waiting.TryGetValue(n.Id, out l)) { l = new List<Node>(); waiting[n.Id] = l; q.Add(n.Id); }
@@ -272,6 +296,20 @@ namespace SMX
             idle.Enqueue(id); q.Add(""); // the empty id only wakes the worker up
         }
 
+        // Worker thread: read the icon again; if it differs from the cached picture, replace the file and tell the menu.
+        static void Refresh(string id)
+        {
+            try
+            {
+                var fresh = Shell.LoadIcon(id); byte[] now = Png(fresh);
+                string f = DiskFile(id);
+                if (File.Exists(f) && File.ReadAllBytes(f).SequenceEqual(now)) return;
+                Directory.CreateDirectory(cacheDir); File.WriteAllBytes(f, now);
+                ui.BeginInvoke(new Action(delegate { cache[id] = fresh; var c = Changed; if (c != null) c(id, fresh); }));
+            }
+            catch { } // shortcut: an app that cannot be read now keeps its cached icon, retried on the next check
+        }
+
         static void Work()
         {
             for (;;)
@@ -279,17 +317,20 @@ namespace SMX
                 string id;
                 if (!q.TryTake(out id, idle.IsEmpty ? -1 : 0)) { if (!idle.TryDequeue(out id)) continue; }
                 if (id.Length == 0) continue;
+                if (id[0] == '!') { Refresh(id.Substring(1)); continue; }
                 ImageSource img = null;
                 bool app = !id.StartsWith("file:"); // file icons are not worth caching on disk
                 try { if (app) img = Disk(id); } catch { }
+                bool fromDisk = img != null;
                 if (img == null) { try { img = Shell.LoadIcon(id); if (app) SaveDisk(id, img); } catch { } }
                 string i = id; ImageSource im = img;
                 ui.BeginInvoke(DispatcherPriority.Background, new Action(delegate
                 {
                     List<Node> l; waiting.TryGetValue(i, out l); waiting.Remove(i);
                     if (im == null) { failed.Add(i); return; }
-                    cache[i] = im;
+                    cache[i] = im; checkedAt[i] = fromDisk ? DateTime.MinValue : DateTime.UtcNow;
                     if (l != null) foreach (var n in l) n.Icon = im;
+                    if (fromDisk) Revalidate(i); // painted from disk: check it against the shell next
                 }));
             }
         }
@@ -699,6 +740,7 @@ namespace SMX
             ApplyTheme();
             Microsoft.Win32.SystemEvents.UserPreferenceChanged += delegate { ui.BeginInvoke(new Action(ApplyTheme)); };
             Icons.Start(ui);
+            Icons.Changed = (id, img) => { foreach (var n in IconNodes()) if (n.Id == id) n.Icon = img; };
             Wire();
             InitLook();
             NameButtons(win);
@@ -1878,6 +1920,20 @@ namespace SMX
 
         // ----- pins: model + persistence -----
 
+        // Every node that can show an app icon: pins, the items inside folders, and the scanned app list.
+        IEnumerable<Node> IconNodes()
+        {
+            foreach (var p in pins) { yield return p; if (p.IsFolder) foreach (var c in p.Items) yield return c; }
+            foreach (var a in apps) yield return a;
+        }
+
+        // Tray menu "Actualizar iconos": drop all cached icons and read them again.
+        public void ResetIcons()
+        {
+            Icons.Reset();
+            foreach (var n in IconNodes()) if (!n.IsFolder) n.Icon = null; // the next read of Icon asks for a fresh one
+        }
+
         Node FindPinned(string id)
         {
             foreach (var p in pins)
@@ -2095,6 +2151,7 @@ namespace SMX
                 var cm = new WF.ContextMenuStrip();
                 cm.Items.Add("Abrir", null, delegate { menu.Toggle(); });
                 cm.Items.Add(autostart);
+                cm.Items.Add("Actualizar iconos", null, delegate { menu.ResetIcons(); });
                 cm.Items.Add("Salir", null, delegate { tray.Visible = false; app.Shutdown(); });
                 tray.ContextMenuStrip = cm;
                 tray.MouseClick += (s, e) => { if (e.Button == WF.MouseButtons.Left) menu.Toggle(); };

@@ -61,6 +61,7 @@ Nexo replaces the Start menu that opens with the Windows key (and with the Start
 - The menu is kept warm in memory, so it opens at once; panels fade and scale in and out.
 - Works over borderless full-screen games: the taskbar is brought back while the menu is open and put away when it closes.
 - Windows shortcuts such as `Win+E` or `Win+D` keep working; only a *lone* tap of the Windows key opens Nexo.
+- Icons are cached for instant paint but re-checked in the background, so an app that changes its icon shows the new one within hours (tray icon → *Actualizar iconos* forces it now).
 - A dock with your personal folders and Windows Settings, and a power menu.
 - Starts with Windows if you want it to (tray icon → *Iniciar con Windows*).
 
