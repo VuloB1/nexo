@@ -32,8 +32,8 @@ using SD = System.Drawing;
 [assembly: AssemblyDescription("Menú de inicio personalizado para Windows")]
 [assembly: AssemblyCompany("Nexo")]
 [assembly: AssemblyCopyright("Copyright © 2026 Nexo")]
-[assembly: AssemblyVersion("1.0.3.0")]
-[assembly: AssemblyFileVersion("1.0.3.0")]
+[assembly: AssemblyVersion("1.0.4.0")]
+[assembly: AssemblyFileVersion("1.0.4.0")]
 
 namespace SMX
 {
@@ -233,9 +233,11 @@ namespace SMX
         static readonly Dictionary<string, DateTime> checkedAt = new Dictionary<string, DateTime>(); // UI thread only
         public static Action<string, ImageSource> Changed; // an icon was replaced: the menu updates the nodes that show it
 
+        static readonly int born = Environment.TickCount;
         static void Revalidate(string id)
         {
             DateTime t;
+            if (Environment.TickCount - born < 60000) return; // not while the menu is still starting up: icons shown later are checked then
             if (id.StartsWith("file:") || (checkedAt.TryGetValue(id, out t) && DateTime.UtcNow - t < TimeSpan.FromHours(6))) return;
             checkedAt[id] = DateTime.UtcNow;
             idle.Enqueue("!" + id); q.Add(""); // "!" = only compare with a fresh copy
@@ -317,7 +319,7 @@ namespace SMX
                 string id;
                 if (!q.TryTake(out id, idle.IsEmpty ? -1 : 0)) { if (!idle.TryDequeue(out id)) continue; }
                 if (id.Length == 0) continue;
-                if (id[0] == '!') { Refresh(id.Substring(1)); continue; }
+                if (id[0] == '!') { Refresh(id.Substring(1)); Thread.Sleep(20); continue; } // trickle: never a burst of 300 reads
                 ImageSource img = null;
                 bool app = !id.StartsWith("file:"); // file icons are not worth caching on disk
                 try { if (app) img = Disk(id); } catch { }
@@ -505,7 +507,7 @@ namespace SMX
             return cls.ToString().StartsWith("Shell_", StringComparison.Ordinal) && cls.ToString().EndsWith("TrayWnd", StringComparison.Ordinal);
         }
 
-        public static void Watch() { timer = new System.Threading.Timer(delegate { Refresh(); }, null, 0, 1000); }
+        public static void Watch() { timer = new System.Threading.Timer(delegate { Refresh(); }, null, 4000, 1000); }
 
         [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
 
@@ -1208,7 +1210,7 @@ namespace SMX
         public void Warm()
         {
             win.Left = -10000; win.Top = -10000; win.Show();
-            ui.BeginInvoke(DispatcherPriority.ContextIdle, new Action(delegate { win.Hide(); win.ShowActivated = true; TrimLater(); }));
+            ui.BeginInvoke(DispatcherPriority.ContextIdle, new Action(delegate { win.Hide(); win.ShowActivated = true; widgets.Shown(); widgets.Hidden(); TrimLater(); }));
         }
 
         [DllImport("kernel32.dll")] static extern bool SetProcessWorkingSetSize(IntPtr p, IntPtr min, IntPtr max);
@@ -2129,6 +2131,7 @@ namespace SMX
                 return;
             }
 
+            try { string pd = Path.Combine(AppDir.Path, "jit"); Directory.CreateDirectory(pd); System.Runtime.ProfileOptimization.SetProfileRoot(pd); System.Runtime.ProfileOptimization.StartProfile("nexo.prof"); } catch { } // JIT the next start on spare cores
             bool first;
             using (var mutex = new Mutex(true, "Nexo_single_instance", out first))
             {
