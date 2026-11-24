@@ -32,8 +32,8 @@ using SD = System.Drawing;
 [assembly: AssemblyDescription("Menú de inicio personalizado para Windows")]
 [assembly: AssemblyCompany("Nexo")]
 [assembly: AssemblyCopyright("Copyright © 2026 Nexo")]
-[assembly: AssemblyVersion("1.0.4.0")]
-[assembly: AssemblyFileVersion("1.0.4.0")]
+[assembly: AssemblyVersion("1.0.5.0")]
+[assembly: AssemblyFileVersion("1.0.5.0")]
 
 namespace SMX
 {
@@ -1042,8 +1042,29 @@ namespace SMX
             return Color.FromRgb(0x00, 0x78, 0xD4);
         }
 
+        // With "Transparency effects" off Windows paints acrylic as a flat opaque colour, which would make the opacity slider useless.
+        // Then acrylic is switched off and the window's own alpha (the tint) shows the desktop through, unblurred, at no cost.
+        static bool WindowsTransparency()
+        {
+            try { using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")) return k == null || !(k.GetValue("EnableTransparency") is int) || (int)k.GetValue("EnableTransparency") != 0; }
+            catch { return true; }
+        }
+
+        bool acrylic = true, acrylicSet;
+        void ApplyBackdrop()
+        {
+            bool on = WindowsTransparency();
+            if (acrylicSet && on == acrylic) return;
+            acrylic = on; acrylicSet = true;
+            var ap = new ACCENT { state = on ? 4 : 0, gradient = on ? 0x01000000u : 0u };
+            int sz = Marshal.SizeOf(typeof(ACCENT)); IntPtr pa = Marshal.AllocHGlobal(sz); Marshal.StructureToPtr(ap, pa, false);
+            var data = new WCAD { attr = 19, data = pa, size = sz };
+            SetWindowCompositionAttribute(hwnd, ref data); Marshal.FreeHGlobal(pa);
+        }
+
         void ApplyTheme()
         {
+            if (hwnd != IntPtr.Zero && acrylicSet) ApplyBackdrop(); // Windows' transparency switch may have just changed
             isLight = forceTheme != null ? forceTheme == "light" : prefs.BgFile != null ? prefs.BgLum * (100 - prefs.BgDim) / 10000.0 > 0.55 // text colour follows the picture
                     : prefs.Theme == 1 ? true : prefs.Theme == 2 ? false : ReadLight();
             Action<string, string, string> t = (key, dark, light) =>
@@ -1197,10 +1218,7 @@ namespace SMX
             // Acrylic through the window accent API rather than DWMWA_SYSTEMBACKDROP_TYPE: the backdrop type turns into a flat
             // colour whenever the window is not the active one, the accent keeps blurring what is behind. The tint is drawn by Root (cTint).
             v = 1; DwmSetWindowAttribute(hwnd, 38, ref v, 4);
-            var ap = new ACCENT { state = 4, gradient = 0x01000000 };
-            int sz = Marshal.SizeOf(typeof(ACCENT)); IntPtr pa = Marshal.AllocHGlobal(sz); Marshal.StructureToPtr(ap, pa, false);
-            var data = new WCAD { attr = 19, data = pa, size = sz };
-            SetWindowCompositionAttribute(hwnd, ref data); Marshal.FreeHGlobal(pa);
+            ApplyBackdrop();
             var m = new MARGINS { l = -1, r = -1, t = -1, b = -1 };
             DwmExtendFrameIntoClientArea(hwnd, ref m);
             SetWindowLong(hwnd, -20, GetWindowLong(hwnd, -20) | 0x80); // tool window: hidden from Alt+Tab
@@ -1844,11 +1862,17 @@ namespace SMX
             return cm;
         }
 
+        // the program and its arguments go separately: one string with spaces is taken as a file name and silently fails
+        static void Shutdown(string how)
+        {
+            try { Process.Start(new ProcessStartInfo("shutdown.exe", how + " /t 0") { UseShellExecute = false, CreateNoWindow = true }); } catch { }
+        }
+
         void PowerMenu()
         {
             var cm = NewMenu(btnPower); cm.Placement = PlacementMode.Bottom;
-            Add(cm, "Reiniciar", delegate { Hide(); Run("shutdown.exe /r /t 0"); });
-            Add(cm, "Apagar", delegate { Hide(); Run("shutdown.exe /s /t 0"); });
+            Add(cm, "Reiniciar", delegate { Hide(); Shutdown("/r"); });
+            Add(cm, "Apagar", delegate { Hide(); Shutdown("/s"); });
             cm.IsOpen = true;
         }
 
